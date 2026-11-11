@@ -26,7 +26,7 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 APPS_JSON = SCRIPT_DIR / "apps.json"
 SOURCES_DIR = SCRIPT_DIR / "sources"
-COMPOSE_FILE = SCRIPT_DIR / "docker-compose.yml"
+COMPOSE_FILE = SCRIPT_DIR / "tmp" / "docker-compose.yml"
 
 
 # ============================================================================
@@ -179,6 +179,13 @@ def _indent(text: str, n: int) -> str:
     return "\n".join(pad + line if line else pad for line in text.splitlines())
 
 
+def _resolve_host_path(p: str) -> str:
+    """相对路径按项目根目录解析，避免 compose 文件位于 public/ 时被误导。"""
+    if not p or p.startswith(("/", "~")):
+        return p
+    return str(SCRIPT_DIR / p)
+
+
 def _render_service(app: dict[str, Any]) -> str:
     """把一个 app dict 渲染成一个 service 的 YAML 段落 (不带缩进)。"""
     name = app.get("name") or repo_dir_name(app["git_url"])
@@ -209,15 +216,26 @@ def _render_service(app: dict[str, Any]) -> str:
             for e in env:
                 lines.append(f"    - {_yaml_scalar(e)}")
 
+    # 环境变量文件（敏感信息放这里，不入库）
+    env_files = app.get("env_file", [])
+    if isinstance(env_files, str):
+        env_files = [env_files]
+    if env_files:
+        lines.append("  env_file:")
+        for f in env_files:
+            lines.append(f"    - {_yaml_scalar(_resolve_host_path(f))}")
+
     # volumes
     volumes = app.get("volumes", [])
     if volumes:
         lines.append("  volumes:")
         for v in volumes:
             if isinstance(v, str):
-                lines.append(f"    - {_yaml_scalar(v)}")
+                parts = v.split(":")
+                parts[0] = _resolve_host_path(parts[0])
+                lines.append(f"    - {_yaml_scalar(':'.join(parts))}")
             elif isinstance(v, dict):
-                host = v.get("host", "")
+                host = _resolve_host_path(v.get("host", ""))
                 container = v.get("container", "")
                 mode = v.get("mode", "")
                 s = f"{host}:{container}"
@@ -237,6 +255,7 @@ def generate_compose(data: dict[str, Any]) -> Path:
     header = "# 本文件由 deploy.py 自动生成，请勿手动修改。修改 apps.json 后重新生成。"
     body = header + "\nservices:\n" + _indent("\n".join(services), 1) + "\n"
 
+    COMPOSE_FILE.parent.mkdir(parents=True, exist_ok=True)
     COMPOSE_FILE.write_text(body, encoding="utf-8")
     info(f"已生成 {COMPOSE_FILE}")
     return COMPOSE_FILE
@@ -245,9 +264,31 @@ def generate_compose(data: dict[str, Any]) -> Path:
 # ============================================================================
 # start / stop / rebuild
 # ============================================================================
+def validate_env_files(data: dict[str, Any]) -> None:
+    """启动前校验敏感配置文件是否已在本机准备好（这些文件不入库）。"""
+    missing: list[str] = []
+    for app in data["apps"]:
+        files = app.get("env_file", [])
+        if isinstance(files, str):
+            files = [files]
+        for f in files:
+            p = Path(_resolve_host_path(f))
+            if not p.is_file():
+                missing.append(str(p))
+
+    if missing:
+        step("敏感配置检查")
+        error("以下配置文件缺失，无法启动：")
+        for m in missing:
+            print(f"    - {m}")
+        warn("这些文件含密钥，不会提交到 git；请在本机准备：cp .env.example .env 后填入真实值")
+        sys.exit(1)
+
+
 def cmd_start() -> None:
     require_tools()
     data = load_apps()
+    validate_env_files(data)
     generate_compose(data)
 
     step("启动所有服务 (docker compose up -d)")

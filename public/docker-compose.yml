@@ -1,0 +1,101 @@
+services:
+  # 测试环境数据库
+  pg-test:
+    image: pgvector/pgvector:pg17
+    container_name: pgvector-test
+    environment:
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: graph-test
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./test-pgdata:/var/lib/postgresql/data
+      - ./init-test.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  # online数据库
+  pg-server:
+    image: pgvector/pgvector:pg17
+    container_name: pgvector-server
+    environment:
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: short-video
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  # SeaweedFS 本地 OSS
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    container_name: seaweedfs
+    ports:
+      - "8333:8333"   # S3 API
+      - "8888:8888"   # Filer Web UI
+      - "9333:9333"   # Master UI
+    command: server -filer -s3 -dir=/data -volume.max=0
+    volumes:
+      - ./seaweedfs-data:/data
+    restart: unless-stopped
+
+  # Elasticsearch 单机（内置 IK 中文分词，测试环境）
+  es-test:
+    build:
+      context: ./es-ik
+      args:
+        ES_VERSION: 8.19.24
+        IK_VERSION: 8.19.24
+    image: local/elasticsearch-ik:8.19.24
+    container_name: es-test
+    environment:
+      - discovery.type=single-node          # 单机模式，不组集群
+      - xpack.security.enabled=false        # 测试环境关掉账号密码/TLS
+      - xpack.security.enrollment.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - bootstrap.memory_lock=true
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m      # 小内存测试机，按机器内存调整
+      - TZ=Asia/Shanghai
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"                          # HTTP API，9300 不用对外暴露（单机）
+    volumes:
+      - ./es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  # Redis（AOF 持久化，测试环境）
+  redis-test:
+    image: redis:8-alpine
+    container_name: redis-test
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"                 # 开 AOF（默认每秒 fsync），重启不丢数据
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - allkeys-lru           # 纯缓存用途可按需改成 noeviction
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+#（注：内容由AI生成）

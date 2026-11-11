@@ -11,12 +11,8 @@
       "env": {
         "SPEECH_ADDR": ":8080"
       },
-      "volumes": [
-        {
-          "host": ".env",
-          "container": "/app/.env",
-          "mode": "ro"
-        }
+      "env_file": [
+        ".env.volc-speech"
       ]
     }
   ]

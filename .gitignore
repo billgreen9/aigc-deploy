@@ -1,9 +1,20 @@
 # 自动下载的源码目录
 sources/
 
-# 自动生成的 compose 文件
-docker-compose.yml
-docker-compose.override.yml
+# 由 apps.json 自动生成的 compose（临时产物）
+tmp/
+
+*.pyc
+__pycache__/
+
+# ===== 敏感信息（禁止入库）=====
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.key
+*.pem
+secrets/
 
 # 系统 / 编辑器
 .DS_Store

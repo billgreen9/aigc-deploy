@@ -18,16 +18,25 @@ aigc-deploy/
 ├── run.sh              # Shell 薄包装，定位 python3 并转发
 ├── deploy.py           # Python 主逻辑（image/start/stop/rebuild）
 ├── apps.json           # 应用清单（你编辑这个）
+├── .env.*.example      # 敏感变量模板（提交到仓库，不含真实值）
+├── public/             # 公共服务（数据库、Redis 等），手工维护，与本脚本无关
 ├── .gitignore
 └── README.md
 ```
 
-首次运行后自动生成：
+脚本运行后自动生成：
 
 ```
-sources/                # 从 GitHub clone 下来的源码目录
-docker-compose.yml      # 由 deploy.py start 自动生成，勿手动修改
+sources/                        # 从 GitHub clone 下来的源码目录
+tmp/docker-compose.yml          # 由 apps.json 生成，临时产物，勿手动修改
 ```
+
+两类 compose 文件互不影响：
+
+| 文件 | 内容 |
+|------|------|
+| `tmp/docker-compose.yml` | **由脚本生成**，只包含 `apps.json` 里的业务应用 |
+| `public/docker-compose.yml` | **手工维护**，公共基础设施（数据库、Redis、消息队列等） |
 
 ## apps.json 格式
 
@@ -45,8 +54,8 @@ docker-compose.yml      # 由 deploy.py start 自动生成，勿手动修改
       "env": {
         "SPEECH_ADDR": ":8080"
       },
-      "volumes": [
-        {"host": ".env", "container": "/app/.env", "mode": "ro"}
+      "env_file": [
+        ".env.volc-speech"
       ]
     }
   ]
@@ -68,7 +77,8 @@ docker-compose.yml      # 由 deploy.py start 自动生成，勿手动修改
 | `git_url` | ✓ | — | HTTPS 或 SSH 地址 |
 | `image` | ✓ | — | `docker build -t` 的本地镜像名，**不推远程** |
 | `ports` | ✗ | `[]` | 端口映射数组，每项是 `"host:container"` 字符串 |
-| `env` | ✗ | `{}` | 环境变量，支持 dict（`KEY: VALUE`）或 list（`"KEY=VALUE"`） |
+| `env` | ✗ | `{}` | 环境变量，支持 dict（`KEY: VALUE`）或 list（`"KEY=VALUE"`）。**不要在这里写密钥** |
+| `env_file` | ✗ | `[]` | 敏感变量文件（字符串或数组），本地文件、已被 git 忽略，启动时注入容器 |
 | `volumes` | ✗ | `[]` | 卷映射，字符串形式 `"host:container[:mode]"` 或 dict 形式 |
 | `restart` | ✗ | `"unless-stopped"` | compose 的 restart 策略 |
 
@@ -126,7 +136,7 @@ vim apps.json
 ### 第 3 步：查看服务状态
 
 ```bash
-docker compose -f docker-compose.yml ps
+docker compose -f tmp/docker-compose.yml ps
 ```
 
 ## 工作原理
@@ -140,7 +150,7 @@ docker compose -f docker-compose.yml ps
 ### start 模式
 
 1. 读取 `apps.json`
-2. 纯 Python 手写生成 `docker-compose.yml`（**无需 PyYAML**，无第三方依赖）
+2. 纯 Python 手写生成 `tmp/docker-compose.yml`（**无需 PyYAML**，无第三方依赖）
 3. `docker compose up -d` 后台启动全部服务
 
 生成的 compose 示例（对应上面 apps.json）：
@@ -156,9 +166,37 @@ services:
       - "8080:8080"
     environment:
       - SPEECH_ADDR=":8080"
-    volumes:
-      - ".env:/app/.env:ro"
+    env_file:
+      - "/Users/liuquan/GoProjects/aigc-deploy/.env.volc-speech"
 ```
+
+## 敏感信息处理
+
+密钥等敏感配置**只存在本机**，仓库里只提交模板。
+
+```
+aigc-deploy/
+├── .env.volc-speech.example   # 提交，全部留空/占位
+├── .env.volc-speech           # 不提交，真实密钥（.gitignore 已覆盖）
+```
+
+规则：
+
+1. `apps.json` 里只用 `env` 放非敏感项（端口、开关），密钥一律走 `env_file`
+2. `.gitignore` 已忽略 `.env`、`.env.*`、`*.key`、`*.pem`、`secrets/`，仅放行 `*.example`
+3. `./run.sh start` 会先校验 `env_file` 是否存在，缺失直接报错并提示复制模板，不会把缺失路径挂成空目录
+4. 生成的 `tmp/docker-compose.yml` 只写文件**路径**，不含任何密钥值
+
+首次部署：
+
+```bash
+cp .env.volc-speech.example .env.volc-speech
+chmod 600 .env.volc-speech
+vim .env.volc-speech          # 填入真实 key
+./run.sh start
+```
+
+如果担心密钥泄漏在磁盘上，也可以接入 macOS Keychain / 1Password CLI，在启动前导出为环境变量，思路相同。
 
 ## 架构选择
 
