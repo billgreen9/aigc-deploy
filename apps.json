@@ -1,0 +1,23 @@
+{
+  "branch": "main",
+  "apps": [
+    {
+      "name": "volc-speech",
+      "git_url": "https://github.com/billgreen9/volc-speech.git",
+      "image": "volc-speech",
+      "ports": [
+        "8080:8080"
+      ],
+      "env": {
+        "SPEECH_ADDR": ":8080"
+      },
+      "volumes": [
+        {
+          "host": ".env",
+          "container": "/app/.env",
+          "mode": "ro"
+        }
+      ]
+    }
+  ]
+}

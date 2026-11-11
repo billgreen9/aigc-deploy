@@ -1,0 +1,13 @@
+# 自动下载的源码目录
+sources/
+
+# 自动生成的 compose 文件
+docker-compose.yml
+docker-compose.override.yml
+
+# 系统 / 编辑器
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
